@@ -275,7 +275,8 @@ export default function App() {
                 ids: (selectedIds || []).map(String),
                 slug: input && input.includes('start.gg') ? input : null,
                 participants,
-                participantDetails: details
+                participantDetails: details,
+                totalEntrants: entrants.length
               }
               console.log('Control: broadcasting payload to overlay', payload)
               bc.postMessage(payload)

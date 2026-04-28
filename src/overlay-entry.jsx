@@ -51,18 +51,48 @@ function OverlayApp() {
     async function loadInitial() {
       try {
         if (eventId) {
-          const ev = await fetchEventById(null, eventId)
-          if (!mounted) return
-          setEvent({ id: ev.id, name: ev.name })
-          const nodes = ev.entrants?.nodes || ev.entrants || []
-          setEntrants(nodes)
-          // try to enrich participant details if possible
+          // fetch augmented event details (includes sets/entrants) when possible
           try {
-            const sets = await fetchSetsByEventId(null, eventId)
-            const details = computeDetailsFromSets(sets)
-            if (mounted) setParticipantDetails(details)
-          } catch (e) {}
+            const details = await fetchEventDetails(null, eventId)
+            if (!mounted) return
+            if (details) {
+              setEvent({ id: details.id, name: details.name })
+              const nodes = details.entrants?.nodes || details.entrants || []
+              setEntrants(nodes)
+              const sets = details.sets?.nodes || details.sets || []
+              const computed = computeDetailsFromSets(sets)
+              setParticipantDetails(computed)
+            } else {
+              const ev = await fetchEventById(null, eventId)
+              if (!mounted) return
+              setEvent({ id: ev.id, name: ev.name })
+              const nodes = ev.entrants?.nodes || ev.entrants || []
+              setEntrants(nodes)
+            }
+          } catch (e) {
+            // fallback to minimal event fetch
+            try {
+              const ev = await fetchEventById(null, eventId)
+              if (!mounted) return
+              setEvent({ id: ev.id, name: ev.name })
+              const nodes = ev.entrants?.nodes || ev.entrants || []
+              setEntrants(nodes)
+            } catch (err) {
+              // ignore
+            }
+          }
         } else if (slug) {
+          // if slug looks like a tournament URL, fetch tournament name
+          try {
+            if (slug.includes('/tournament/')) {
+              try {
+                const parsed = new URL(slug)
+                const tslug = parsed.pathname.split('/tournament/')[1].split('/')[0]
+                const t = await fetchTournamentBySlug(null, tslug)
+                if (mounted) setTournamentName(t?.name || null)
+              } catch (e) {}
+            }
+          } catch (e) {}
           // if slug looks like a tournament URL, do nothing here — control should push updates
           const ev = await fetchEventBySlug(null, slug)
           if (!mounted) return
@@ -132,7 +162,7 @@ function OverlayApp() {
               const sets = details.sets?.nodes || details.sets || []
               logSetsDiagnostics(sets)
               const computed = computeDetailsFromSets(sets)
-              const merged = { ...buildBaseline(nodes), ...computed, ...(msg.participantDetails || {}) }
+              const merged = { ...buildBaseline(nodes), ...(msg.participantDetails || {}), ...computed }
               const normalized = {}
               for (const k of Object.keys(merged)) {
                 const v = merged[k] || {}
@@ -140,8 +170,12 @@ function OverlayApp() {
               }
               console.log('Overlay: merged participantDetails', normalized)
               setParticipantDetails(normalized)
-              setSelectedIds(ids)
+              setTimeout(() => { if (mounted) setSelectedIds(ids) }, 0)
               return
+            } else {
+              // If we couldn't fetch full event details, at least set a minimal event object
+              // include totalEntrants from control if provided so UI can show correct count
+              setEvent({ id: msg.eventId, name: null, entrantsCount: msg.totalEntrants || null })
             }
           }
 
@@ -158,11 +192,13 @@ function OverlayApp() {
               }
             }
 
-            if (msg.slug.includes('/event/')) {
+            // accept both /event/ and /events/ URL shapes
+            if (msg.slug.includes('/event/') || msg.slug.includes('/events/')) {
               try {
                 // extract event slug from full URL and resolve to event id
                 const parsed = new URL(msg.slug)
-                const eslug = parsed.pathname.split('/event/')[1].split('/')[0]
+                const esplit = parsed.pathname.includes('/event/') ? '/event/' : '/events/'
+                const eslug = parsed.pathname.split(esplit)[1].split('/')[0]
                 const ev = await fetchEventBySlug(null, eslug)
                 if (!mounted) return
                 if (ev) {
@@ -176,14 +212,14 @@ function OverlayApp() {
                     const sets = details.sets?.nodes || details.sets || []
                     logSetsDiagnostics(sets)
                     const computed = computeDetailsFromSets(sets)
-                    const merged = { ...buildBaseline(nodes), ...computed, ...(msg.participantDetails || {}) }
+                    const merged = { ...buildBaseline(nodes), ...(msg.participantDetails || {}), ...computed }
                     const normalized = {}
                     for (const k of Object.keys(merged)) {
                       const v = merged[k] || {}
                       normalized[k] = { ...v, score: v.score ?? 0, waves: v.waves ?? 0, round: v.round ?? null }
                     }
                     setParticipantDetails(normalized)
-                    setSelectedIds(ids)
+                    setTimeout(() => { if (mounted) setSelectedIds(ids) }, 0)
                     return
                   }
                 }
@@ -195,9 +231,29 @@ function OverlayApp() {
 
           // Fallback: use provided participants and any provided participantDetails
           setEntrants(mapped)
-          console.log('Overlay: using participantDetails from control', msg.participantDetails)
-          setParticipantDetails(msg.participantDetails || {})
-          setSelectedIds(ids)
+          // If control didn't provide participantDetails for all selected ids, try to fetch sets ourselves (best-effort)
+          const provided = msg.participantDetails || {}
+          const missing = ids.filter(id => !provided[String(id)])
+          if ((missing.length > 0) && msg.eventId) {
+            try {
+              console.log('Overlay: fetching sets to compute missing participant details for', missing)
+              const sets = await fetchSetsByEventId(null, msg.eventId)
+              if (!mounted) return
+              const computed = computeDetailsFromSets(sets)
+              const merged = { ...provided, ...computed }
+              console.log('Overlay: computed participantDetails keys', Object.keys(computed), 'merged keys', Object.keys(merged))
+              // normalize to previous shape (latest + sets)
+              setParticipantDetails(merged)
+              setTimeout(() => { if (mounted) setSelectedIds(ids) }, 0)
+            } catch (e) {
+              console.log('Overlay: failed to fetch sets for missing details', e)
+              setParticipantDetails(provided)
+              setTimeout(() => { if (mounted) setSelectedIds(ids) }, 0)
+            }
+          } else {
+            setParticipantDetails(provided)
+            setTimeout(() => { if (mounted) setSelectedIds(ids) }, 0)
+          }
           return
         }
 
@@ -320,8 +376,13 @@ function OverlayApp() {
         const opponentName = opponentIds.map(id => slotNames[id] || null).filter(Boolean).join(', ') || null
         const setScore = `${score}–${opponentScore}`
 
-        const prev = byEntrant[entId]
         const candidate = { setId, round, waves, score, opponentIds, opponentId: opponentIds[0] || null, opponentName, opponentScore, setScore, name: slotNames[entId] || null, startedAt: s?.startedAt, completedAt: s?.completedAt }
+
+        if (!byEntrant[entId]) byEntrant[entId] = { sets: [], latest: null }
+        byEntrant[entId].sets.push(candidate)
+
+        // update latest if this candidate is newer
+        const prev = byEntrant[entId].latest
         function isNewer(a, b) {
           if (!a) return true
           if (!b) return false
@@ -330,11 +391,34 @@ function OverlayApp() {
           return String(bTime) > String(aTime)
         }
         if (!prev || isNewer(prev, candidate)) {
-          byEntrant[entId] = candidate
+          byEntrant[entId].latest = candidate
         }
       }
     }
-    return byEntrant
+
+    // Normalize: for each entrant, expose top-level fields from latest and keep history
+    const normalized = {}
+    for (const [pid, info] of Object.entries(byEntrant)) {
+      const latest = info.latest || null
+      normalized[pid] = {
+        name: latest?.name || (latest && latest.name) || null,
+        setId: latest?.setId || null,
+        round: latest?.round || null,
+        waves: latest?.waves ?? 0,
+        score: latest?.score ?? 0,
+        opponentName: latest?.opponentName || null,
+        setScore: latest?.setScore || null,
+        startedAt: latest?.startedAt || null,
+        completedAt: latest?.completedAt || null,
+        sets: (info.sets || []).sort((a,b)=>{
+          const at = a.completedAt || a.startedAt || a.setId
+          const bt = b.completedAt || b.startedAt || b.setId
+          return String(bt) > String(at) ? 1 : -1
+        })
+      }
+    }
+
+    return normalized
   }
 
   // Poll sets periodically to keep participantDetails up-to-date
