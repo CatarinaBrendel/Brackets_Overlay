@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { fetchTournamentBySlug, fetchEvent, fetchEntrantsByEventId, fetchEventBySlug } from './api/startgg'
 import Overlay from './Overlay'
 
@@ -11,6 +11,9 @@ export default function App() {
   const [participantDetails, setParticipantDetails] = useState({})
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
+  const [announcementIds, setAnnouncementIds] = useState([])
+  const [announcementSpeed, setAnnouncementSpeed] = useState(18)
+  const speedBroadcastRef = useRef(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
   const [overlayBusy, setOverlayBusy] = useState(false)
@@ -40,14 +43,30 @@ export default function App() {
       const parsed = parseSlugFromUrl(val)
 
       if (parsed.type === 'event' && parsed.id) {
-        const nodes = await fetchEntrantsByEventId(null, parsed.id)
-        setEntrants(nodes)
-        // fetch sets to enrich participants
+        // parsed.id is an event slug (from URL). Resolve the event by slug, then load entrants/sets by event id.
         try {
-          const sets = await (await import('./api/startgg')).fetchSetsByEventId(null, parsed.id)
-          enrichParticipants(nodes, sets)
+          const ev = await fetchEventBySlug(null, parsed.id)
+          if (ev) {
+            setEvent(ev)
+            const nodes = await fetchEntrantsByEventId(null, ev.id)
+            setEntrants(nodes)
+            try {
+              const sets = await (await import('./api/startgg')).fetchSetsByEventId(null, ev.id)
+              enrichParticipants(nodes, sets)
+            } catch (e) {}
+          }
         } catch (e) {
-          // ignore enrichment errors
+          // fall back to previous behaviour: try loading entrants directly
+          try {
+            const nodes = await fetchEntrantsByEventId(null, parsed.id)
+            setEntrants(nodes)
+            try {
+              const sets = await (await import('./api/startgg')).fetchSetsByEventId(null, parsed.id)
+              enrichParticipants(nodes, sets)
+            } catch (e) {}
+          } catch (err) {
+            console.warn('Failed to resolve event by slug or id', err && err.message)
+          }
         }
         setLoading(false)
         return
@@ -113,37 +132,55 @@ export default function App() {
   }
 
   function enrichParticipants(nodes, sets) {
-    // Map entrantId -> latest set info (best-effort)
+    // Map entrantId -> latest set info (defensive and team-aware)
     const byEntrant = {}
     const setsList = Array.isArray(sets) ? sets : (sets?.nodes || [])
     for (const s of setsList) {
-      const setId = s.id
-      const round = s.fullRoundText || (s.round && s.round.name) || null
-      const gamesList = Array.isArray(s.games) ? s.games : (s.games && s.games.nodes) ? s.games.nodes : []
+      const setId = s?.id
+      const round = s?.phaseGroup?.name || s?.round?.name || s?.fullRoundText || null
+      const gamesList = Array.isArray(s?.games) ? s.games : (s?.games && s.games.nodes) ? s.games.nodes : []
       const waves = gamesList.length
-      // Collect entrant ids in this set
-      const slotList = Array.isArray(s.slots) ? s.slots : (s.slots && s.slots.nodes) ? s.slots.nodes : []
+
+      const slotList = Array.isArray(s?.slots) ? s.slots : (s?.slots && s.slots.nodes) ? s.slots.nodes : []
       const slotEntrants = slotList.map(sl => String((sl && sl.entrant && sl.entrant.id) || sl.entrantId || sl.id))
-      // compute per-entrant score by counting game wins
+      const slotNames = {}
+      for (const sl of slotList) {
+        const pid = String((sl && sl.entrant && sl.entrant.id) || sl.entrantId || sl.id)
+        const pname = (sl && sl.entrant && (sl.entrant.name || (sl.entrant.participants && sl.entrant.participants.map(p=>p.gamerTag||p.name).filter(Boolean).join(', ')))) || sl.name || null
+        if (pid) slotNames[pid] = pname
+      }
+
       const winsBy = {}
       for (const g of gamesList) {
-        const gg = g && (g.node || g)
-        let winnerId = null
-        if (gg) {
-          winnerId = gg.winnerId || (gg.winner && gg.winner.id) || (gg.winner && gg.winner.entrant && gg.winner.entrant.id) || (gg.winner && gg.winner.participant && gg.winner.participant.id) || (gg.winner && gg.winner.player && gg.winner.player.id) || null
-        }
-        if (!winnerId) continue
-        winsBy[String(winnerId)] = (winsBy[String(winnerId)] || 0) + 1
+        const gg = g?.node || g
+        if (!gg) continue
+        const winner = gg.winnerId || gg.winner?.id || gg.winner?.entrant?.id || gg.winner?.participant?.id || gg.winner?.player?.id || gg.winner?.entrantId || null
+        if (!winner) continue
+        winsBy[String(winner)] = (winsBy[String(winner)] || 0) + 1
       }
-      if (Object.keys(winsBy).length === 0 && s.winnerId) {
-        winsBy[String(s.winnerId)] = 1
+      if (Object.keys(winsBy).length === 0 && (s && (s.winnerId || s.winner?.id))) {
+        const w = String(s.winnerId || (s.winner && s.winner.id))
+        winsBy[w] = (winsBy[w] || 0) + 1
       }
+
       for (const entId of slotEntrants) {
         const score = winsBy[String(entId)] || 0
+        const opponentIds = slotEntrants.filter(id => String(id) !== String(entId))
+        const opponentScore = opponentIds.reduce((acc, oid) => acc + (winsBy[String(oid)] || 0), 0)
+        const opponentName = opponentIds.map(id => slotNames[id] || null).filter(Boolean).join(', ') || null
+        const setScore = `${score}–${opponentScore}`
+
         const prev = byEntrant[entId]
-        // prefer later sets (string compare may work if ids are numeric strings)
-        if (!prev || String(setId) > String(prev.setId)) {
-          byEntrant[entId] = { setId, round, waves, score }
+        const candidate = { setId, round, waves, score, opponentIds, opponentId: opponentIds[0] || null, opponentName, opponentScore, setScore, name: slotNames[entId] || null, startedAt: s?.startedAt, completedAt: s?.completedAt }
+        function isNewer(a, b) {
+          if (!a) return true
+          if (!b) return false
+          const aTime = a.completedAt || a.startedAt || a.setId
+          const bTime = b.completedAt || b.startedAt || b.setId
+          return String(bTime) > String(aTime)
+        }
+        if (!prev || isNewer(prev, candidate)) {
+          byEntrant[entId] = candidate
         }
       }
     }
@@ -164,12 +201,14 @@ export default function App() {
 
       <div className="mt-6 bg-black/40 p-4 rounded">
         <h2 className="text-lg">Event / Entrants ({entrants?.length ?? 0})</h2>
-        {events && events.length > 1 && (
+
+        {/* Select Event - prefer listing fetched events, otherwise show resolved event */}
+        {((events && events.length > 0) || event) && (
           <div className="mt-2">
             <label className="block">Select Event
-              <select className="w-full mt-1 p-2 text-black rounded" value={selectedEventId||''} onChange={e=>handleSelectEvent(e.target.value)}>
+              <select className="w-full mt-1 p-2 text-black rounded" value={selectedEventId|| (event && event.id) || ''} onChange={e=>handleSelectEvent(e.target.value)}>
                 <option value="">-- choose event --</option>
-                {events.map(ev=> <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+                {(events && events.length > 0 ? events : (event ? [event] : [])).map(ev=> <option key={ev.id} value={ev.id}>{ev.name}</option>)}
               </select>
             </label>
           </div>
@@ -178,7 +217,7 @@ export default function App() {
         {loading && <div className="mt-2 text-sm text-white/70">Loading entrants…</div>}
         {!loading && entrants && entrants.length > 0 && (
           <div className="mt-2">
-            <label className="block">Search participants
+            <label className="block">Search Participant for the Brackets Overlay
               <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full mt-1 p-2 rounded text-black" placeholder="Search by name" />
             </label>
           </div>
@@ -248,6 +287,74 @@ export default function App() {
         >
           Update Overlay
         </button>
+      </div>
+      <div className="mt-3 bg-black/30 p-3 rounded">
+        <h3 className="text-sm mb-2">Announcement (Ticker)</h3>
+        <div className="mt-2 mb-2 flex items-center gap-3">
+          <label className="text-sm">Speed</label>
+          <input id="announcement-speed" type="range" min="8" max="40" value={announcementSpeed} onChange={e=>{
+              const v = Number(e.target.value)
+              setAnnouncementSpeed(v)
+              // debounce broadcast so sliding isn't noisy
+              if (!speedBroadcastRef.current) speedBroadcastRef.current = { tid: null }
+              if (speedBroadcastRef.current.tid) clearTimeout(speedBroadcastRef.current.tid)
+              speedBroadcastRef.current.tid = setTimeout(() => {
+                try {
+                  const bc = new BroadcastChannel('startgg-overlay')
+                  const pids = announcementIds || []
+                  const participants = pids.map(pid => entrants.find(e=>String(e.id)===String(pid)) || { id: pid, name: '' }).map(p => ({ id: String(p.id), name: p.name }))
+                  const details = {}
+                  for (const id of pids) {
+                    const key = String(id)
+                    if (participantDetails[key]) details[key] = participantDetails[key]
+                  }
+                  const payload = { type: 'announcement-speed', announcementSpeed: v, participants, participantDetails: details, eventId: selectedEventId || (event && event.id) || null, slug: input && input.includes('start.gg') ? input : null }
+                  bc.postMessage(payload)
+                  bc.close()
+                } catch (err) {
+                  console.log('Failed to broadcast announcement speed', err)
+                }
+              }, 150)
+            }} />
+          <div className="text-sm">{announcementSpeed}s</div>
+        </div>
+        <label className="block">Select player(s) for Announcement Overlay
+          <select multiple size={6} value={announcementIds} onChange={e=>{
+              const opts = Array.from(e.target.options).filter(o=>o.selected).map(o=>o.value)
+              setAnnouncementIds(opts)
+            }} className="w-full mt-1 p-2 rounded text-black">
+            {entrants.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
+          </select>
+        </label>
+        <div className="mt-2">
+          <button className="bg-orange-600 px-4 py-2 rounded" onClick={() => {
+            try {
+              const bc = new BroadcastChannel('startgg-overlay')
+              const pids = announcementIds || []
+              if (!pids || pids.length === 0) { console.log('No announcement participant selected'); return }
+              const participants = pids.map(pid => entrants.find(e=>String(e.id)===String(pid)) || { id: pid, name: '' }).map(p => ({ id: String(p.id), name: p.name }))
+              const details = {}
+              for (const id of pids) {
+                const key = String(id)
+                if (participantDetails[key]) details[key] = participantDetails[key]
+              }
+
+              const payload = {
+                type: 'announcement',
+                participants,
+                participantDetails: details,
+                announcementSpeed: announcementSpeed,
+                eventId: selectedEventId || (event && event.id) || null,
+                slug: input && input.includes('start.gg') ? input : null
+              }
+              console.log('Control: broadcasting announcement', payload)
+              bc.postMessage(payload)
+              bc.close()
+            } catch (err) {
+              console.log('Failed to send announcement: ' + err.message)
+            }
+          }}>Send Announcement</button>
+        </div>
       </div>
     </div>
   )

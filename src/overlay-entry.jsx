@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import Overlay from './Overlay'
 import { fetchEventBySlug, fetchEventById, fetchEntrantsByEventId, fetchTournamentBySlug, fetchSetsByEventId, fetchEventDetails } from './api/startgg'
@@ -38,6 +38,7 @@ function OverlayApp() {
   const [participantDetails, setParticipantDetails] = useState({})
   const [tournamentName, setTournamentName] = useState(null)
   const [error, setError] = useState(null)
+  const pollState = useRef({ prevSerialized: null, timerId: null })
 
   // initial load from query params (optional)
   useEffect(() => {
@@ -159,24 +160,32 @@ function OverlayApp() {
 
             if (msg.slug.includes('/event/')) {
               try {
-                const details = await fetchEventDetails(null, msg.slug)
+                // extract event slug from full URL and resolve to event id
+                const parsed = new URL(msg.slug)
+                const eslug = parsed.pathname.split('/event/')[1].split('/')[0]
+                const ev = await fetchEventBySlug(null, eslug)
                 if (!mounted) return
-                if (details) {
-                  setEvent({ id: details.id, name: details.name })
-                  const nodes = details.entrants?.nodes || details.entrants || []
-                  setEntrants(nodes)
-                  const sets = details.sets?.nodes || details.sets || []
-                  logSetsDiagnostics(sets)
-                  const computed = computeDetailsFromSets(sets)
-                  const merged = { ...buildBaseline(nodes), ...computed, ...(msg.participantDetails || {}) }
-                  const normalized = {}
-                  for (const k of Object.keys(merged)) {
-                    const v = merged[k] || {}
-                    normalized[k] = { ...v, score: v.score ?? 0, waves: v.waves ?? 0, round: v.round ?? null }
+                if (ev) {
+                  // fetch full details by id for richer info
+                  const details = await fetchEventDetails(null, ev.id)
+                  if (!mounted) return
+                  if (details) {
+                    setEvent({ id: details.id, name: details.name })
+                    const nodes = details.entrants?.nodes || details.entrants || []
+                    setEntrants(nodes)
+                    const sets = details.sets?.nodes || details.sets || []
+                    logSetsDiagnostics(sets)
+                    const computed = computeDetailsFromSets(sets)
+                    const merged = { ...buildBaseline(nodes), ...computed, ...(msg.participantDetails || {}) }
+                    const normalized = {}
+                    for (const k of Object.keys(merged)) {
+                      const v = merged[k] || {}
+                      normalized[k] = { ...v, score: v.score ?? 0, waves: v.waves ?? 0, round: v.round ?? null }
+                    }
+                    setParticipantDetails(normalized)
+                    setSelectedIds(ids)
+                    return
                   }
-                  setParticipantDetails(normalized)
-                  setSelectedIds(ids)
-                  return
                 }
               } catch (e) {
                 console.log('Overlay: failed to fetch event by slug', e)
@@ -229,24 +238,30 @@ function OverlayApp() {
 
           if (msg.slug.includes('/event/')) {
             try {
-              const details = await fetchEventDetails(null, msg.slug)
+              const parsed = new URL(msg.slug)
+              const eslug = parsed.pathname.split('/event/')[1].split('/')[0]
+              const ev = await fetchEventBySlug(null, eslug)
               if (!mounted) return
-              if (details) {
-                setEvent({ id: details.id, name: details.name })
-                const nodes = details.entrants?.nodes || details.entrants || []
-                setEntrants(nodes)
-                const sets = details.sets?.nodes || details.sets || []
-                logSetsDiagnostics(sets)
-                const computed = computeDetailsFromSets(sets)
-                const merged = { ...buildBaseline(nodes), ...computed }
-                const normalized = {}
-                for (const k of Object.keys(merged)) {
-                  const v = merged[k] || {}
-                  normalized[k] = { ...v, score: v.score ?? 0, waves: v.waves ?? 0, round: v.round ?? null }
+              if (ev) {
+                const details = await fetchEventDetails(null, ev.id)
+                if (!mounted) return
+                if (details) {
+                  setEvent({ id: details.id, name: details.name })
+                  const nodes = details.entrants?.nodes || details.entrants || []
+                  setEntrants(nodes)
+                  const sets = details.sets?.nodes || details.sets || []
+                  logSetsDiagnostics(sets)
+                  const computed = computeDetailsFromSets(sets)
+                  const merged = { ...buildBaseline(nodes), ...computed }
+                  const normalized = {}
+                  for (const k of Object.keys(merged)) {
+                    const v = merged[k] || {}
+                    normalized[k] = { ...v, score: v.score ?? 0, waves: v.waves ?? 0, round: v.round ?? null }
+                  }
+                  setParticipantDetails(normalized)
+                  setSelectedIds(ids)
+                  return
                 }
-                setParticipantDetails(normalized)
-                setSelectedIds(ids)
-                return
               }
             } catch (e) {
               console.log('Overlay: failed to fetch event by slug', e)
@@ -268,36 +283,99 @@ function OverlayApp() {
     const byEntrant = {}
     const setsList = Array.isArray(sets) ? sets : (sets?.nodes || [])
     for (const s of setsList) {
-      const setId = s.id
-      const round = s.fullRoundText || (s.round && s.round.name) || null
-      const gamesList = Array.isArray(s.games) ? s.games : (s.games && s.games.nodes) ? s.games.nodes : []
+      const setId = s?.id
+      const round = s?.phaseGroup?.name || s?.round?.name || s?.fullRoundText || null
+      const gamesList = Array.isArray(s?.games) ? s.games : (s?.games && s.games.nodes) ? s.games.nodes : []
       const waves = gamesList.length
-      const slotList = Array.isArray(s.slots) ? s.slots : (s.slots && s.slots.nodes) ? s.slots.nodes : []
+
+      const slotList = Array.isArray(s?.slots) ? s.slots : (s?.slots && s.slots.nodes) ? s.slots.nodes : []
       const slotEntrants = slotList.map(sl => String((sl && sl.entrant && sl.entrant.id) || sl.entrantId || sl.id))
+      const slotNames = {}
+      for (const sl of slotList) {
+        const pid = String((sl && sl.entrant && sl.entrant.id) || sl.entrantId || sl.id)
+        const pname = (sl && sl.entrant && (sl.entrant.name || (sl.entrant.participants && sl.entrant.participants.map(p=>p.gamerTag||p.name).filter(Boolean).join(', ')))) || sl.name || null
+        if (pid) slotNames[pid] = pname
+      }
+
+      // Count wins per entrant by inspecting games. Handle wrapped nodes and multiple possible winner shapes.
       const winsBy = {}
       for (const g of gamesList) {
-        const gg = g && (g.node || g) // handle item being wrapped
-        let winnerId = null
-        if (gg) {
-          winnerId = gg.winnerId || (gg.winner && gg.winner.id) || (gg.winner && gg.winner.entrant && gg.winner.entrant.id) || (gg.winner && gg.winner.participant && gg.winner.participant.id) || (gg.winner && gg.winner.player && gg.winner.player.id) || null
-        }
-        if (!winnerId) continue
-        winsBy[String(winnerId)] = (winsBy[String(winnerId)] || 0) + 1
+        const gg = g?.node || g
+        if (!gg) continue
+        const winner = gg.winnerId || gg.winner?.id || gg.winner?.entrant?.id || gg.winner?.participant?.id || gg.winner?.player?.id || gg.winner?.entrantId || null
+        if (!winner) continue
+        winsBy[String(winner)] = (winsBy[String(winner)] || 0) + 1
       }
       // fallback: if no game-level winners but set-level winner exists, credit them one win
-      if (Object.keys(winsBy).length === 0 && s.winnerId) {
-        winsBy[String(s.winnerId)] = 1
+      if (Object.keys(winsBy).length === 0 && (s && (s.winnerId || s.winner?.id))) {
+        const w = String(s.winnerId || (s.winner && s.winner.id))
+        winsBy[w] = (winsBy[w] || 0) + 1
       }
+
+      // For team/multi-slot matches, aggregate opponent scores across opponent slot ids
       for (const entId of slotEntrants) {
         const score = winsBy[String(entId)] || 0
+        const opponentIds = slotEntrants.filter(id => String(id) !== String(entId))
+        const opponentScore = opponentIds.reduce((acc, oid) => acc + (winsBy[String(oid)] || 0), 0)
+        const opponentName = opponentIds.map(id => slotNames[id] || null).filter(Boolean).join(', ') || null
+        const setScore = `${score}–${opponentScore}`
+
         const prev = byEntrant[entId]
-        if (!prev || String(setId) > String(prev.setId)) {
-          byEntrant[entId] = { setId, round, waves, score }
+        const candidate = { setId, round, waves, score, opponentIds, opponentId: opponentIds[0] || null, opponentName, opponentScore, setScore, name: slotNames[entId] || null, startedAt: s?.startedAt, completedAt: s?.completedAt }
+        function isNewer(a, b) {
+          if (!a) return true
+          if (!b) return false
+          const aTime = a.completedAt || a.startedAt || a.setId
+          const bTime = b.completedAt || b.startedAt || b.setId
+          return String(bTime) > String(aTime)
+        }
+        if (!prev || isNewer(prev, candidate)) {
+          byEntrant[entId] = candidate
         }
       }
     }
     return byEntrant
   }
+
+  // Poll sets periodically to keep participantDetails up-to-date
+  useEffect(() => {
+    let mounted = true
+    async function pollOnce() {
+      if (!event || !event.id) return
+      try {
+        const sets = await fetchSetsByEventId(null, event.id)
+        const computed = computeDetailsFromSets(sets)
+        // build baseline from current entrants
+        const baseline = {}
+        for (const n of (entrants || [])) {
+          const pid = String(n.id)
+          const p0 = (n.participants && n.participants[0]) || null
+          baseline[pid] = { name: n.name || (p0 && (p0.gamerTag || p0.name)) || null }
+        }
+        const merged = { ...baseline, ...computed }
+        const normalized = {}
+        for (const k of Object.keys(merged)) {
+          const v = merged[k] || {}
+          normalized[k] = { ...v, score: v.score ?? 0, waves: v.waves ?? 0, round: v.round ?? null, opponentName: v.opponentName ?? null, setScore: v.setScore ?? null }
+        }
+        const s = JSON.stringify(normalized)
+        if (mounted && pollState.current.prevSerialized !== s) {
+          pollState.current.prevSerialized = s
+          setParticipantDetails(normalized)
+        }
+      } catch (e) {
+        console.log('pollOnce failed', e)
+      }
+    }
+
+    if (event && event.id) {
+      pollOnce()
+      const id = setInterval(pollOnce, 60000)
+      pollState.current.timerId = id
+      return () => { mounted = false; clearInterval(id) }
+    }
+    return () => { mounted = false }
+  }, [event && event.id, entrants])
 
   return (
     <div className="p-2">

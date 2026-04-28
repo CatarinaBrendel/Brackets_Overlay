@@ -96,32 +96,61 @@ export async function fetchEntrantsByEventId(apiKey, eventId) {
 }
 
 export async function fetchSetsByEventId(apiKey, eventId) {
+  // User-validated augmented query (works in many tournaments)
   const query = `
-    query EventSets($id: ID!) {
-      event(id: $id) {
+    query EventSetsWithGames($eventId: ID!) {
+      event(id: $eventId) {
         id
-        sets(query: { perPage: 500 }) { nodes { id fullRoundText state winnerId slots { entrant { id name } entrantId } games { id winnerId } } }
+        name
+        entrants {
+          nodes { id name participants { id gamerTag player { id } } }
+        }
+        sets(perPage: 500) {
+          nodes {
+            id
+            fullRoundText
+            round
+            startedAt
+            completedAt
+            state
+            slots { entrant { id name } }
+            games { id winnerId }
+          }
+        }
       }
     }
   `
 
   try {
-    const data = await doQuery(query, { id: eventId })
+    const data = await doQuery(query, { eventId })
     return data.event?.sets?.nodes || data.event?.sets || []
   } catch (err) {
-    if (err.message && err.message.includes('nodes')) {
-      const alt = `
-        query EventSetsAlt($id: ID!) {
-          event(id: $id) {
-            id
-            sets(query: { perPage: 500 }) { id fullRoundText state winnerId slots { entrant { id name } entrantId } games { id winnerId } }
+    // Fallback to a safer shape that requests nested round/phaseGroup and slots/games nodes
+    const fallback = `
+      query EventSetsFallback($id: ID!) {
+        event(id: $id) {
+          id
+          sets(query: { perPage: 500 }) {
+            nodes {
+              id
+              fullRoundText
+              round { name }
+              phaseGroup { id name }
+              state
+              winnerId
+              slots { nodes { entrant { id name participants { id gamerTag player { id } } } entrantId } }
+              games { nodes { id winnerId } }
+            }
           }
         }
-      `
-      const data = await doQuery(alt, { id: eventId })
-      return data.event?.sets || []
+      }
+    `
+    try {
+      const alt = await doQuery(fallback, { id: eventId })
+      return alt.event?.sets?.nodes || alt.event?.sets || []
+    } catch (e) {
+      throw err
     }
-    throw err
   }
 }
 
@@ -131,9 +160,9 @@ export async function fetchEventDetails(apiKey, eventId) {
       event(id: $id) {
         id
         name
-        phaseGroups { id }
+        phaseGroups { id name }
         entrants { nodes { id name participants { id gamerTag player { id } } } }
-        sets(perPage: 500) { nodes { id fullRoundText round startedAt completedAt state slots { entrant { id name } } } }
+        sets(perPage: 500) { nodes { id fullRoundText round { name } startedAt completedAt state phaseGroup { id name } slots { nodes { entrant { id name participants { id gamerTag } } entrantId } } }
       }
     }
   `
@@ -156,7 +185,17 @@ export async function fetchEventDetails(apiKey, eventId) {
         name
         entrants { nodes { id name participants { id gamerTag player { id } } } }
         sets(perPage: 500) {
-          nodes { id fullRoundText round startedAt completedAt state slots { entrant { id name } } games { id winnerId } }
+          nodes {
+            id
+            fullRoundText
+            round { name }
+            startedAt
+            completedAt
+            state
+            phaseGroup { id name }
+            slots { nodes { entrant { id name participants { id gamerTag } } entrantId } }
+            games { nodes { id winnerId } }
+          }
         }
       }
     }
