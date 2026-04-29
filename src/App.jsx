@@ -217,107 +217,108 @@ export default function App() {
           <div className="ml-auto muted">Control panel · Live preview</div>
         </div>
         <div className="control-grid">
-            <div className="mb-4 bg-black/50 p-4 rounded">
-        <label className="block mt-2">Tournament or Event (slug or full URL)
-          <input value={input} onChange={e=>setInput(e.target.value)} className="w-full mt-1 p-2 rounded text-black" placeholder="e.g. my-tournament-2026 or https://start.gg/tournament/...?" />
-        </label>
-        <div className="mt-3">
-          <button disabled={loading} className="bg-blue-600 px-4 py-2 rounded" onClick={handleFetch}>{loading ? 'Loading...' : 'Fetch'}</button>
-        </div>
-        {error && <div className="mt-2 text-red-400">{error}</div>}
+          <div className="mb-2 bg-black/50 p-4 rounded">
+      <label className="block mt-2">Tournament or Event (slug or full URL)
+        <input value={input} onChange={e=>setInput(e.target.value)} className="w-full mt-1 p-2 rounded text-black" placeholder="e.g. my-tournament-2026 or https://start.gg/tournament/...?" />
+      </label>
+      <div className="mt-3">
+        <button disabled={loading} className="bg-blue-600 px-4 py-2 rounded" onClick={handleFetch}>{loading ? 'Loading...' : 'Fetch'}</button>
       </div>
+      {error && <div className="mt-2 text-red-400">{error}</div>}
+        </div>
 
-      <div className="mt-6 bg-black/40 p-4 rounded">
-        <h2 className="text-lg">Event / Entrants ({entrants?.length ?? 0})</h2>
+        <div className="bg-black/40 p-4 rounded">
+          <h2 className="text-lg">Event / Entrants ({entrants?.length ?? 0})</h2>
 
-        {/* Select Event - prefer listing fetched events, otherwise show resolved event */}
-        {((events && events.length > 0) || event) && (
-          <div className="mt-2">
-            <label className="block">Select Event
-              <select className="w-full mt-1 p-2 text-black rounded" value={selectedEventId|| (event && event.id) || ''} onChange={e=>handleSelectEvent(e.target.value)}>
-                <option value="">-- choose event --</option>
-                {(events && events.length > 0 ? events : (event ? [event] : [])).map(ev=> <option key={ev.id} value={ev.id}>{ev.name}</option>)}
-              </select>
-            </label>
-          </div>
-        )}
-
-        {loading && <div className="mt-2 text-sm text-white/70">Loading entrants…</div>}
-        {!loading && entrants && entrants.length > 0 && (
-          <div className="mt-2">
-            <label className="block">Search Participant for the Brackets Overlay
-              <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full mt-1 p-2 rounded text-black" placeholder="Search by name" />
-            </label>
-          </div>
-        )}
-
-        {!loading && entrants && entrants.length > 0 ? (
-          <div className="mt-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-white/80">Total participants: {entrants.length}</div>
-              <div className="text-sm text-white/80">Selected: {selectedIds.length}</div>
+          {/* Select Event - prefer listing fetched events, otherwise show resolved event */}
+          {((events && events.length > 0) || event) && (
+            <div className="mt-2">
+              <label className="block">Select Event
+                <select className="w-full mt-1 p-2 text-black rounded" value={selectedEventId|| (event && event.id) || ''} onChange={e=>handleSelectEvent(e.target.value)}>
+                  <option value="">-- choose event --</option>
+                  {(events && events.length > 0 ? events : (event ? [event] : [])).map(ev=> <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+                </select>
+              </label>
             </div>
+          )}
 
-            <div className="mt-2 flex gap-2">
-              <button className="bg-gray-600 px-3 py-1 rounded text-sm" onClick={()=>setSelectedIds(entrants.map(e=>e.id))}>Select all</button>
-              <button className="bg-gray-600 px-3 py-1 rounded text-sm" onClick={()=>setSelectedIds([])}>Clear</button>
+          {loading && <div className="mt-2 text-sm text-white/70">Loading entrants…</div>}
+          {!loading && entrants && entrants.length > 0 && (
+            <div className="mt-2">
+              <label className="block">Search Participant for the Brackets Overlay
+                <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full mt-1 p-2 rounded text-black" placeholder="Search by name" />
+              </label>
             </div>
+          )}
 
-            <div className="max-h-80 overflow-auto bg-black/20 p-2 rounded mt-2">
-              <ul>
-                {(
-                  (search && search.trim())
-                    ? entrants.filter(en => (en.name || '').toLowerCase().includes(search.toLowerCase()))
-                    : entrants
-                ).map(en => (
-                  <li key={en.id} className="py-1 flex items-center gap-2">
-                    <input type="checkbox" className="w-4 h-4" checked={selectedIds.includes(en.id)} onChange={() => setSelectedIds(prev => prev.includes(en.id) ? prev.filter(id=>id!==en.id) : [...prev, en.id])} />
-                    <span>{en.name}</span>
-                  </li>
-                ))}
-              </ul>
+          {!loading && entrants && entrants.length > 0 ? (
+            <div className="mt-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-white/80">Total participants: {entrants.length}</div>
+                <div className="text-sm text-white/80">Selected: {selectedIds.length}</div>
+              </div>
+
+              <div className="mt-2 flex gap-2">
+                <button className="bg-gray-600 px-3 py-1 rounded text-sm" onClick={()=>setSelectedIds(entrants.map(e=>e.id))}>Select all</button>
+                <button className="bg-gray-600 px-3 py-1 rounded text-sm" onClick={()=>setSelectedIds([])}>Clear</button>
+              </div>
+
+              <div className="max-h-80 overflow-auto bg-black/20 p-2 rounded mt-2">
+                <ul>
+                  {(
+                    (search && search.trim())
+                      ? entrants.filter(en => (en.name || '').toLowerCase().includes(search.toLowerCase()))
+                      : entrants
+                  ).map(en => (
+                    <li key={en.id} className="py-1 flex items-center gap-2">
+                      <input type="checkbox" className="w-4 h-4" checked={selectedIds.includes(en.id)} onChange={() => setSelectedIds(prev => prev.includes(en.id) ? prev.filter(id=>id!==en.id) : [...prev, en.id])} />
+                      <span>{en.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-          </div>
-        ) : (!loading && (
-          <div className="mt-2 text-sm text-white/70">No entrants loaded</div>
-        ))}
-            <div className="mt-4">
-              <button
-            className={`bg-green-600 px-4 py-2 rounded ${overlayBusy ? 'bg-gray-500 cursor-not-allowed' : 'hover:brightness-110 cursor-pointer'} transition transform duration-150 active:scale-95 active:translate-y-1 focus:outline-none focus:ring-2 focus:ring-green-400`}
-          onClick={() => {
-            try {
-              const bc = new BroadcastChannel('startgg-overlay')
-              // include minimal participant info and any computed details for overlay
-              const participants = entrants
-                .filter(e => selectedIds.includes(e.id))
-                .map(e => ({ id: String(e.id), name: e.name }))
-              const details = {}
-              for (const id of selectedIds) {
-                const key = String(id)
-                if (participantDetails[key]) details[key] = participantDetails[key]
+          ) : (!loading && (
+            <div className="mt-2 text-sm text-white/70">No entrants loaded</div>
+          ))}
+              <div className="mt-4">
+                <button
+              className={`bg-green-600 px-4 py-2 rounded ${overlayBusy ? 'bg-gray-500 cursor-not-allowed' : 'hover:brightness-110 cursor-pointer'} transition transform duration-150 active:scale-95 active:translate-y-1 focus:outline-none focus:ring-2 focus:ring-green-400`}
+            onClick={() => {
+              try {
+                const bc = new BroadcastChannel('startgg-overlay')
+                // include minimal participant info and any computed details for overlay
+                const participants = entrants
+                  .filter(e => selectedIds.includes(e.id))
+                  .map(e => ({ id: String(e.id), name: e.name }))
+                const details = {}
+                for (const id of selectedIds) {
+                  const key = String(id)
+                  if (participantDetails[key]) details[key] = participantDetails[key]
+                }
+                const payload = {
+                  type: 'update',
+                  eventId: selectedEventId || (event && event.id) || null,
+                  ids: (selectedIds || []).map(String),
+                  slug: input && input.includes('start.gg') ? input : null,
+                  participants,
+                  participantDetails: details,
+                  totalEntrants: entrants.length
+                }
+                console.log('Control: broadcasting payload to overlay', payload)
+                bc.postMessage(payload)
+                bc.close()
+              } catch (err) {
+                console.log('Failed to send overlay update: ' + err.message)
               }
-              const payload = {
-                type: 'update',
-                eventId: selectedEventId || (event && event.id) || null,
-                ids: (selectedIds || []).map(String),
-                slug: input && input.includes('start.gg') ? input : null,
-                participants,
-                participantDetails: details,
-                totalEntrants: entrants.length
-              }
-              console.log('Control: broadcasting payload to overlay', payload)
-              bc.postMessage(payload)
-              bc.close()
-            } catch (err) {
-              console.log('Failed to send overlay update: ' + err.message)
-            }
-          }}
-        >
-          Update Overlay
-              </button>
-            </div>
+            }}
+          >
+            Update Overlay
+                </button>
+              </div>
+        </div>
 
-            <div className="mt-3 bg-black/30 p-3 rounded">
+        <div className="mt-3 bg-black/30 p-4 rounded">
         <h3 className="text-sm mb-2">Announcement (Ticker)</h3>
         <div className="mt-2 mb-2 flex items-center gap-3">
           <label className="text-sm">Speed</label>
@@ -384,12 +385,12 @@ export default function App() {
             }
           }}>Send Announcement</button>
         </div>
-          </div>
-          <aside className="control-side">
-            <div className="bg-black/20 p-3 rounded muted text-sm">Overlay status: {overlayStatus ?? 'idle'}</div>
-          </aside>
         </div>
-      </div>
+
+        <aside className="control-side">
+          <div className="bg-black/20 p-3 rounded muted text-sm">Overlay status: {overlayStatus ?? 'idle'}</div>
+        </aside>
+        </div>
       </div>
     </div>
   )
