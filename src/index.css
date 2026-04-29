@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -32,3 +33,22 @@ body { background: transparent; }
 	0% { transform: translateX(100%); }
 	100% { transform: translateX(-100%); }
 }
+
+
+:root {
+	--bg: rgba(6,7,10,0.95);
+	--panel: rgba(0,0,0,0.5);
+	--muted: #9ca3af;
+	--accent: #06b6d4;
+}
+
+body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background: linear-gradient(180deg, rgba(2,6,23,0.85), rgba(10,10,13,0.95)); }
+
+.control-shell { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 3.5rem 1rem; }
+.control-panel { width: 100%; max-width: 1100px; background: var(--panel); border-radius: 12px; padding: 1rem; box-shadow: 0 8px 30px rgba(2,6,23,0.6); border: 1px solid rgba(255,255,255,0.04); }
+.control-grid { display: flex; flex-direction: column; gap: 1rem; }
+.control-side { padding: 0.5rem; }
+.control-header { display:flex; align-items:center; gap:12px; }
+.control-title { font-weight:700; font-size:1.25rem; }
+.muted { color: var(--muted); }
+.accent { color: var(--accent); }

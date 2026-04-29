@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { fetchTournamentBySlug, fetchEvent, fetchEntrantsByEventId, fetchEventBySlug } from './api/startgg'
-import Overlay from './Overlay'
+ 
 
 export default function App() {
   const [input, setInput] = useState('')
@@ -12,6 +12,7 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
   const [announcementIds, setAnnouncementIds] = useState([])
+  const [tournamentName, setTournamentName] = useState(null)
   const [announcementSpeed, setAnnouncementSpeed] = useState(18)
   const speedBroadcastRef = useRef(null)
   const [error, setError] = useState(null)
@@ -48,11 +49,18 @@ export default function App() {
           const ev = await fetchEventBySlug(null, parsed.id)
           if (ev) {
             setEvent(ev)
+            setTournamentName(ev.tournament?.name || null)
             const nodes = await fetchEntrantsByEventId(null, ev.id)
             setEntrants(nodes)
             try {
               const sets = await (await import('./api/startgg')).fetchSetsByEventId(null, ev.id)
               enrichParticipants(nodes, sets)
+            } catch (e) {}
+            // inform overlay to load headers for this event
+            try {
+              const bc = new BroadcastChannel('startgg-overlay')
+              bc.postMessage({ type: 'load-headers', tournamentName: ev.tournament?.name || null, event: { id: ev.id, name: ev.name }, slug: val })
+              bc.close()
             } catch (e) {}
           }
         } catch (e) {
@@ -87,6 +95,13 @@ export default function App() {
             const sets = await (await import('./api/startgg')).fetchSetsByEventId(null, e.id)
             enrichParticipants(nodes, sets)
           } catch (e) {}
+          // inform overlay to load headers for this tournament + event
+          setTournamentName(tournament?.name || null)
+          try {
+            const bc = new BroadcastChannel('startgg-overlay')
+            bc.postMessage({ type: 'load-headers', tournamentName: tournament?.name || null, event: { id: e.id, name: e.name }, slug: val })
+            bc.close()
+          } catch (e) {}
         }
         setLoading(false)
         return
@@ -96,12 +111,19 @@ export default function App() {
       const e = await fetchEventBySlug(null, val)
       if (e) {
         setEvent(e)
+        setTournamentName(e.tournament?.name || null)
         const nodes = await fetchEntrantsByEventId(null, e.id)
         setEntrants(nodes)
         try {
           const sets = await (await import('./api/startgg')).fetchSetsByEventId(null, e.id)
           enrichParticipants(nodes, sets)
         } catch (err) {}
+        // inform overlay to load headers for this event
+        try {
+          const bc = new BroadcastChannel('startgg-overlay')
+          bc.postMessage({ type: 'load-headers', tournamentName: e.tournament?.name || null, event: { id: e.id, name: e.name }, slug: val })
+          bc.close()
+        } catch (e) {}
       } else {
         setError('No tournament or event found for that slug/URL')
       }
@@ -188,8 +210,14 @@ export default function App() {
   }
 
   return (
-    <div className="p-4 text-white">
-      <div className="mb-4 bg-black/50 p-4 rounded">
+    <div className="control-shell">
+      <div className="control-panel text-white">
+        <div className="control-header mb-4">
+          <div className="control-title">StartGG Control</div>
+          <div className="ml-auto muted">Control panel · Live preview</div>
+        </div>
+        <div className="control-grid">
+            <div className="mb-4 bg-black/50 p-4 rounded">
         <label className="block mt-2">Tournament or Event (slug or full URL)
           <input value={input} onChange={e=>setInput(e.target.value)} className="w-full mt-1 p-2 rounded text-black" placeholder="e.g. my-tournament-2026 or https://start.gg/tournament/...?" />
         </label>
@@ -253,9 +281,8 @@ export default function App() {
         ) : (!loading && (
           <div className="mt-2 text-sm text-white/70">No entrants loaded</div>
         ))}
-      </div>
-      <div className="mt-4">
-        <button
+            <div className="mt-4">
+              <button
             className={`bg-green-600 px-4 py-2 rounded ${overlayBusy ? 'bg-gray-500 cursor-not-allowed' : 'hover:brightness-110 cursor-pointer'} transition transform duration-150 active:scale-95 active:translate-y-1 focus:outline-none focus:ring-2 focus:ring-green-400`}
           onClick={() => {
             try {
@@ -287,9 +314,10 @@ export default function App() {
           }}
         >
           Update Overlay
-        </button>
-      </div>
-      <div className="mt-3 bg-black/30 p-3 rounded">
+              </button>
+            </div>
+
+            <div className="mt-3 bg-black/30 p-3 rounded">
         <h3 className="text-sm mb-2">Announcement (Ticker)</h3>
         <div className="mt-2 mb-2 flex items-center gap-3">
           <label className="text-sm">Speed</label>
@@ -356,6 +384,12 @@ export default function App() {
             }
           }}>Send Announcement</button>
         </div>
+          </div>
+          <aside className="control-side">
+            <div className="bg-black/20 p-3 rounded muted text-sm">Overlay status: {overlayStatus ?? 'idle'}</div>
+          </aside>
+        </div>
+      </div>
       </div>
     </div>
   )

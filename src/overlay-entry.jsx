@@ -39,6 +39,7 @@ function OverlayApp() {
   const [tournamentName, setTournamentName] = useState(null)
   const [error, setError] = useState(null)
   const pollState = useRef({ prevSerialized: null, timerId: null })
+  const loadedRef = useRef({ tournamentSlug: null, eventId: null })
 
   // initial load from query params (optional)
   useEffect(() => {
@@ -57,6 +58,7 @@ function OverlayApp() {
             if (!mounted) return
             if (details) {
               setEvent({ id: details.id, name: details.name })
+              loadedRef.current.eventId = String(eventId)
               const nodes = details.entrants?.nodes || details.entrants || []
               setEntrants(nodes)
               const sets = details.sets?.nodes || details.sets || []
@@ -66,6 +68,7 @@ function OverlayApp() {
               const ev = await fetchEventById(null, eventId)
               if (!mounted) return
               setEvent({ id: ev.id, name: ev.name })
+              loadedRef.current.eventId = String(eventId)
               const nodes = ev.entrants?.nodes || ev.entrants || []
               setEntrants(nodes)
             }
@@ -89,7 +92,11 @@ function OverlayApp() {
                 const parsed = new URL(slug)
                 const tslug = parsed.pathname.split('/tournament/')[1].split('/')[0]
                 const t = await fetchTournamentBySlug(null, tslug)
-                if (mounted) setTournamentName(t?.name || null)
+                if (mounted && tslug !== loadedRef.current.tournamentSlug) {
+                  setTournamentName(t?.name || null)
+                  loadedRef.current.tournamentSlug = tslug
+                }
+                loadedRef.current.tournamentSlug = tslug
               } catch (e) {}
             }
           } catch (e) {}
@@ -97,6 +104,7 @@ function OverlayApp() {
           const ev = await fetchEventBySlug(null, slug)
           if (!mounted) return
           setEvent(ev)
+          if (ev && ev.id) loadedRef.current.eventId = String(ev.id)
           const nodes = await fetchEntrantsByEventId(null, ev.id)
           if (!mounted) return
           setEntrants(nodes)
@@ -124,7 +132,26 @@ function OverlayApp() {
     bc.onmessage = async (ev) => {
       const msg = ev.data
       console.log('Overlay: received broadcast', msg)
-      if (!msg || msg.type !== 'update') return
+      if (!msg) return
+
+      // load-headers: explicit user fetch -> update tournament/event headers
+      if (msg.type === 'load-headers') {
+        try {
+          if (msg.tournamentName && msg.tournamentName !== loadedRef.current.tournamentSlug) {
+            setTournamentName(msg.tournamentName)
+            loadedRef.current.tournamentSlug = msg.tournamentName
+          }
+          if (msg.event && msg.event.id && String(msg.event.id) !== loadedRef.current.eventId) {
+            setEvent({ id: msg.event.id, name: msg.event.name })
+            loadedRef.current.eventId = String(msg.event.id)
+          }
+        } catch (e) {
+          console.log('Overlay: load-headers handling failed', e)
+        }
+        return
+      }
+
+      if (msg.type !== 'update') return
 
       try {
         setError(null)
@@ -156,7 +183,10 @@ function OverlayApp() {
             const details = await fetchEventDetails(null, msg.eventId)
             if (!mounted) return
             if (details) {
-              setEvent({ id: details.id, name: details.name })
+              if (String(details.id) !== loadedRef.current.eventId) {
+                setEvent({ id: details.id, name: details.name })
+                loadedRef.current.eventId = String(details.id)
+              }
               const nodes = details.entrants?.nodes || details.entrants || []
               setEntrants(nodes)
               const sets = details.sets?.nodes || details.sets || []
@@ -186,7 +216,10 @@ function OverlayApp() {
                 const parsed = new URL(msg.slug)
                 const tslug = parsed.pathname.split('/tournament/')[1].split('/')[0]
                 const t = await fetchTournamentBySlug(null, tslug)
-                if (mounted) setTournamentName(t?.name || null)
+                if (mounted && tslug !== loadedRef.current.tournamentSlug) {
+                  setTournamentName(t?.name || null)
+                  loadedRef.current.tournamentSlug = tslug
+                }
               } catch (e) {
                 // ignore
               }
@@ -262,7 +295,10 @@ function OverlayApp() {
           const details = await fetchEventDetails(null, msg.eventId)
           if (!mounted) return
           if (details) {
-            setEvent({ id: details.id, name: details.name })
+            if (String(details.id) !== loadedRef.current.eventId) {
+              setEvent({ id: details.id, name: details.name })
+              loadedRef.current.eventId = String(details.id)
+            }
             const nodes = details.entrants?.nodes || details.entrants || []
             setEntrants(nodes)
             const sets = details.sets?.nodes || details.sets || []
@@ -286,7 +322,10 @@ function OverlayApp() {
               const parsed = new URL(msg.slug)
               const tslug = parsed.pathname.split('/tournament/')[1].split('/')[0]
               const t = await fetchTournamentBySlug(null, tslug)
-              if (mounted) setTournamentName(t?.name || null)
+              if (mounted && tslug !== loadedRef.current.tournamentSlug) {
+                setTournamentName(t?.name || null)
+                loadedRef.current.tournamentSlug = tslug
+              }
             } catch (e) {
               // ignore
             }
@@ -302,7 +341,10 @@ function OverlayApp() {
                 const details = await fetchEventDetails(null, ev.id)
                 if (!mounted) return
                 if (details) {
-                  setEvent({ id: details.id, name: details.name })
+                  if (String(details.id) !== loadedRef.current.eventId) {
+                    setEvent({ id: details.id, name: details.name })
+                    loadedRef.current.eventId = String(details.id)
+                  }
                   const nodes = details.entrants?.nodes || details.entrants || []
                   setEntrants(nodes)
                   const sets = details.sets?.nodes || details.sets || []
